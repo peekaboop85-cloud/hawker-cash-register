@@ -306,12 +306,24 @@ def clear_inputs():
 
 
 def show_last_receipt():
-    """Print the paper-style receipt of the sale that was just saved."""
+    """Show what was actually saved: the change is read back from the record."""
     if "last_receipt" not in st.session_state:
         return
     r = st.session_state["last_receipt"]
 
     st.success("Transaction saved. Receipt no. " + r["receipt_no"])
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Total**")
+        st.markdown("## S$ " + money(r["sales"]))
+    with col2:
+        st.markdown("**Received**")
+        st.markdown("## S$ " + money(r["rendered"]))
+    with col3:
+        st.markdown("**Change to give**")
+        st.markdown("## S$ " + money(r["change"]))
+
     lines = []
     lines.append(r["store_name"].center(32))
     lines.append("-" * 32)
@@ -337,66 +349,76 @@ def render_register(config, rows):
 
     st.caption("Business day " + today + "  |  next receipt no. " + receipt_no)
 
+    # The payment type is chosen outside the form. It has to take effect at
+    # once, because an electronic payment must switch off the cash box.
+    payment_type = st.selectbox("Payment type", payment_types, key="in_pay")
+    is_cash = (payment_type == cash_type)
+
     suffix = "_" + str(input_round())
-    left, right = st.columns([3, 2])
 
-    with left:
-        payment_type = st.selectbox("Payment type", payment_types, key="in_pay")
-        is_cash = (payment_type == cash_type)
+    # Both amounts sit inside a form. Streamlit reads every box in a form at
+    # the moment Total is pressed, so the change that is worked out and the
+    # change that is written to the file always come from the same reading.
+    with st.form("register" + suffix):
+        left, right = st.columns([3, 2])
 
-        sales = st.number_input(
-            "Amount payable (S$)",
-            min_value=0.00, step=0.05, format="%.2f", key="in_sales" + suffix,
-        )
-
-        if is_cash:
-            rendered = st.number_input(
-                "Cash received (S$)",
-                min_value=0.00, step=0.05, format="%.2f", key="in_rendered" + suffix,
-            )
-        else:
-            rendered = sales
-            st.number_input(
-                "Cash received (S$)", value=sales, format="%.2f", disabled=True,
-                help="Electronic payment is always the exact amount.",
+        with left:
+            sales = st.number_input(
+                "Amount payable (S$)",
+                min_value=0.00, step=0.05, format="%.2f", key="in_sales" + suffix,
             )
 
-    change = calc_change(sales, rendered)
+            if is_cash:
+                rendered = st.number_input(
+                    "Cash received (S$)",
+                    min_value=0.00, step=0.05, format="%.2f", key="in_rendered" + suffix,
+                )
+            else:
+                rendered = sales
+                st.number_input(
+                    "Cash received (S$)", value=sales, format="%.2f", disabled=True,
+                    help="Electronic payment is always the exact amount.",
+                )
 
-    with right:
-        st.markdown("**Change due**")
-        if change is None:
-            st.markdown("## S$ --.--")
-            st.warning("Cash received is less than the amount payable.")
-        else:
-            st.markdown("## S$ " + money(change))
-            if not is_cash:
-                st.caption("No change for " + payment_type + " payments.")
+        with right:
+            st.markdown("**Paying by**")
+            st.markdown("## " + payment_type)
+            if is_cash:
+                st.caption("Key in both amounts, then press Total.")
+            else:
+                st.caption("No change is given for " + payment_type + ".")
 
-    st.divider()
+        submitted = st.form_submit_button("Total", type="primary")
 
-    if st.button("Save transaction", type="primary"):
+    if submitted:
         if sales <= 0:
             st.error("Amount payable must be more than zero.")
-        elif change is None:
-            st.error("Cannot save: the cash received is not enough.")
         else:
-            now = datetime.datetime.now()
-            record = {
-                "date": today,
-                "time": now.strftime("%H:%M:%S"),
-                "receipt_no": receipt_no,
-                "sales": round(sales, 2),
-                "rendered": round(rendered, 2),
-                "change": change,
-                "payment_type": payment_type,
-            }
-            append_txn(record)
+            change = calc_change(sales, rendered)
+            if change is None:
+                # The dollar signs are escaped, otherwise Markdown reads the
+                # pair of them as the start and end of a mathematics formula.
+                st.error(
+                    "Nothing was saved. Cash received S\\$ " + money(rendered)
+                    + " is less than the amount payable S\\$ " + money(sales) + "."
+                )
+            else:
+                now = datetime.datetime.now()
+                record = {
+                    "date": today,
+                    "time": now.strftime("%H:%M:%S"),
+                    "receipt_no": receipt_no,
+                    "sales": round(sales, 2),
+                    "rendered": round(rendered, 2),
+                    "change": change,
+                    "payment_type": payment_type,
+                }
+                append_txn(record)
 
-            record["store_name"] = config.get("store_name", "My Store")
-            st.session_state["last_receipt"] = record
-            clear_inputs()
-            st.rerun()
+                record["store_name"] = config.get("store_name", "My Store")
+                st.session_state["last_receipt"] = record
+                clear_inputs()
+                st.rerun()
 
     show_last_receipt()
 

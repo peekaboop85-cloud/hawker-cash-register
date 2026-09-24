@@ -36,10 +36,25 @@ edit, not a code change.
 
 ## Screens
 
-1. **Cash Register** — amount payable, cash received, change shown live, receipt printed.
+1. **Cash Register** — key in the amount payable and the cash received, press
+   **Total**, and the change plus a receipt are shown.
    Electronic payments auto-fill the received amount and disable the box.
 2. **Daily Report** — every transaction of one day + sales by payment type.
 3. **Monthly Report** — sales summarised by day + sales by payment type.
+
+### Why the amounts sit inside a form
+
+An earlier version worked out the change while the amounts were being typed.
+That version could show one figure on screen and write a different one to the
+file: a mouse wheel passing over an amount box nudges the number in the browser,
+but Streamlit is only told about it when the box loses focus, which happens at
+the very moment the save button is pressed. The screen said S$ 14.20 while
+S$ 14.15 went into the file.
+
+`st.form` removes the gap. Every box in a form is read once, at the instant
+**Total** is pressed, so the change that is worked out and the change that is
+written to the file always come from the same reading. The figures shown after
+the sale are read back out of the saved record, not recalculated.
 
 ## Coding limits observed
 
