@@ -1,0 +1,6 @@
+# Ah Beng Vegetarian Food - system settings
+# Edit this file to change the shop name or the accepted payment types.
+# No need to touch the Python code.
+store_name=Ah Beng Vegetarian Food
+payment_types=Cash,PayNow,PayLah,PayWave
+cash_type=Cash
