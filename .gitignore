@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+
+# 本地文档草稿，不推送到公开仓库
+Part3_Documentation_draft_zh.md
+Part3_Documentation*.docx
