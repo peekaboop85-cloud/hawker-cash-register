@@ -1,0 +1,1 @@
+date,time,opening_float,cash_sales,expected,counted,variance

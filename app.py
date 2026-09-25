@@ -25,12 +25,18 @@ import streamlit as st
 SALES_FILE = "sales.txt"
 CONFIG_FILE = "config.txt"
 
+CASHUP_FILE = "cashup.txt"
+
 FIELDS = ["date", "time", "receipt_no", "sales", "rendered", "change", "payment_type"]
+
+CASHUP_FIELDS = ["date", "time", "opening_float", "cash_sales",
+                 "expected", "counted", "variance"]
 
 DEFAULT_CONFIG = [
     "store_name=Ah Beng Vegetarian Food",
     "payment_types=Cash,PayNow,PayLah,PayWave",
     "cash_type=Cash",
+    "opening_float=50.00",
 ]
 
 
@@ -51,6 +57,13 @@ def ensure_files():
             for line in DEFAULT_CONFIG:
                 f.write(line + "\n")
 
+    try:
+        with open(CASHUP_FILE, "r", encoding="utf-8") as f:
+            f.read(1)
+    except FileNotFoundError:
+        with open(CASHUP_FILE, "w", encoding="utf-8") as f:
+            f.write(",".join(CASHUP_FIELDS) + "\n")
+
 
 def load_config():
     """Read config.txt into a dictionary of setting name -> setting value."""
@@ -65,6 +78,14 @@ def load_config():
             parts = line.split("=", 1)
             config[parts[0].strip()] = parts[1].strip()
     return config
+
+
+def opening_float_default(config):
+    """The float the shop normally starts the day with, taken from config.txt."""
+    try:
+        return round(float(config.get("opening_float", "50.00")), 2)
+    except ValueError:
+        return 50.00
 
 
 def get_payment_types(config):
@@ -148,6 +169,69 @@ def next_receipt_no(rows, day):
     return str(count + 1).zfill(4)
 
 
+def clean_cashup(raw):
+    """Check one line of cashup.txt. Return a tidy dict, or None if broken."""
+    for name in CASHUP_FIELDS:
+        if raw.get(name) is None:
+            return None
+    try:
+        opening = float(raw["opening_float"])
+        cash_sales = float(raw["cash_sales"])
+        expected = float(raw["expected"])
+        counted = float(raw["counted"])
+        variance = float(raw["variance"])
+    except ValueError:
+        return None
+
+    record = {}
+    record["date"] = raw["date"].strip()
+    record["time"] = raw["time"].strip()
+    record["opening_float"] = opening
+    record["cash_sales"] = cash_sales
+    record["expected"] = expected
+    record["counted"] = counted
+    record["variance"] = variance
+    return record
+
+
+def read_cashups():
+    """Read every day that has already been closed."""
+    records = []
+    bad = 0
+    with open(CASHUP_FILE, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for raw in reader:
+            record = clean_cashup(raw)
+            if record is None:
+                bad = bad + 1
+            else:
+                records.append(record)
+    return records, bad
+
+
+def append_cashup(record):
+    """Add one closed day to the end of cashup.txt."""
+    line = ",".join([
+        record["date"],
+        record["time"],
+        money(record["opening_float"]),
+        money(record["cash_sales"]),
+        money(record["expected"]),
+        money(record["counted"]),
+        money(record["variance"]),
+    ])
+    with open(CASHUP_FILE, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def find_cashup(cashups, day):
+    """The closing record of one day, or None when the day is still open."""
+    for c in cashups:
+        if c["date"] == day:
+            return c
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Section 3 - Calculations (plain functions, easy to test)
 # ---------------------------------------------------------------------------
@@ -155,6 +239,11 @@ def next_receipt_no(rows, day):
 def money(value):
     """Show a number as dollars and cents, e.g. 4.5 -> '4.50'."""
     return f"{value:.2f}"
+
+
+def money_line(label, value):
+    """One printed line of a slip: label on the left, amount on the right."""
+    return label.ljust(15) + "S$ " + money(value).rjust(14)
 
 
 def calc_change(sales, rendered):
@@ -187,6 +276,15 @@ def total_of(rows):
     total = 0.0
     for r in rows:
         total = total + r["sales"]
+    return round(total, 2)
+
+
+def cash_sales_of(rows, cash_type):
+    """Money that should physically be in the drawer: the cash sales only."""
+    total = 0.0
+    for r in rows:
+        if r["payment_type"] == cash_type:
+            total = total + r["sales"]
     return round(total, 2)
 
 
@@ -493,7 +591,142 @@ def render_month_report(rows):
 
 
 # ---------------------------------------------------------------------------
-# Section 8 - Main program
+# Section 8 - Screen 4: closing the day (cash-up / Z reading)
+# ---------------------------------------------------------------------------
+
+def build_zreport(store_name, record, other_totals, txn_count, grand_total):
+    """The closing slip, printed the same width as a till receipt."""
+    lines = []
+    lines.append(store_name.center(32))
+    lines.append("DAILY CASH-UP (Z READING)".center(32))
+    lines.append("-" * 32)
+    lines.append("Date    : " + record["date"])
+    lines.append("Closed  : " + record["time"])
+    lines.append("-" * 32)
+    lines.append("IN THE CASH DRAWER")
+    lines.append(money_line("Opening float", record["opening_float"]))
+    lines.append(money_line("Cash sales", record["cash_sales"]))
+    lines.append(money_line("Expected", record["expected"]))
+    lines.append(money_line("Counted", record["counted"]))
+    lines.append(money_line("Variance", record["variance"]))
+    lines.append("-" * 32)
+
+    if len(other_totals) > 0:
+        lines.append("NOT IN THE DRAWER")
+        for name in sorted(other_totals.keys()):
+            lines.append(money_line(name, other_totals[name]))
+        lines.append("-" * 32)
+
+    lines.append(money_line("Total sales", grand_total))
+    lines.append("Transactions  : " + str(txn_count))
+    lines.append("-" * 32)
+    return "\n".join(lines)
+
+
+def split_payments(rows, cash_type):
+    """Separate the electronic payments from the cash ones."""
+    totals, counts = summarise_by_payment(rows)
+    others = {}
+    for name in totals:
+        if name != cash_type:
+            others[name] = totals[name]
+    return others
+
+
+def show_variance(variance):
+    """Say in plain words whether the drawer balances."""
+    if variance == 0:
+        st.success("The drawer balances exactly.")
+    elif variance < 0:
+        st.warning(
+            "The drawer is short by S\\$ " + money(-variance)
+            + ". Check for a wrong change or a sale that was never keyed in."
+        )
+    else:
+        st.warning(
+            "The drawer has S\\$ " + money(variance)
+            + " more than expected. Check for a sale keyed in twice."
+        )
+
+
+def render_cashup(config, rows, cashups):
+    st.header("Daily Cash-Up")
+
+    cash_type = config.get("cash_type", "Cash")
+    store_name = config.get("store_name", "My Store")
+
+    chosen = st.date_input("Business day", value=datetime.date.today())
+    day = str(chosen)
+    day_rows = filter_by_day(rows, day)
+
+    if len(day_rows) == 0:
+        st.info("Nothing was sold on " + day + ", so there is nothing to count.")
+        return
+
+    cash_sales = cash_sales_of(day_rows, cash_type)
+    others = split_payments(day_rows, cash_type)
+    grand = total_of(day_rows)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Cash taken**")
+        st.markdown("## S$ " + money(cash_sales))
+    with col2:
+        st.markdown("**Paid electronically**")
+        st.markdown("## S$ " + money(round(grand - cash_sales, 2)))
+    with col3:
+        st.markdown("**Transactions**")
+        st.markdown("## " + str(len(day_rows)))
+
+    closed = find_cashup(cashups, day)
+
+    if closed is not None:
+        st.success("This day was already closed at " + closed["time"] + ".")
+        show_variance(closed["variance"])
+        st.code(build_zreport(store_name, closed, others, len(day_rows), grand))
+        return
+
+    st.divider()
+    st.caption(
+        "Count the money in the drawer, then key in the two amounts below. "
+        "Only the cash is counted here - electronic payments never reach the drawer."
+    )
+
+    with st.form("cashup_" + day):
+        left, right = st.columns(2)
+        with left:
+            opening = st.number_input(
+                "Opening float (S$)",
+                min_value=0.00, step=1.00, format="%.2f",
+                value=opening_float_default(config),
+                help="The small change put into the drawer before opening.",
+            )
+        with right:
+            counted = st.number_input(
+                "Cash counted in the drawer (S$)",
+                min_value=0.00, step=1.00, format="%.2f",
+            )
+        submitted = st.form_submit_button("Close the day", type="primary")
+
+    if submitted:
+        expected = round(opening + cash_sales, 2)
+        variance = round(counted - expected, 2)
+        now = datetime.datetime.now()
+        record = {
+            "date": day,
+            "time": now.strftime("%H:%M:%S"),
+            "opening_float": round(opening, 2),
+            "cash_sales": cash_sales,
+            "expected": expected,
+            "counted": round(counted, 2),
+            "variance": variance,
+        }
+        append_cashup(record)
+        st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Section 9 - Main program
 # ---------------------------------------------------------------------------
 
 def main():
@@ -502,6 +735,7 @@ def main():
     ensure_files()
     config = load_config()
     rows, bad = read_all()
+    cashups, bad_cashups = read_cashups()
 
     st.title(config.get("store_name", "My Store"))
     st.caption("Simple cash register - AN6100 Assignment Part 3")
@@ -512,16 +746,30 @@ def main():
             + ". The rest of the data is still usable."
         )
 
+    if bad_cashups > 0:
+        st.warning(
+            "Skipped " + str(bad_cashups) + " damaged line(s) in " + CASHUP_FILE
+            + ". The rest of the data is still usable."
+        )
+
     st.sidebar.title("Menu")
     screen = st.sidebar.radio(
         "Go to",
-        ["Cash Register", "Daily Report", "Monthly Report"],
+        ["Cash Register", "Daily Cash-Up", "Daily Report", "Monthly Report"],
     )
     st.sidebar.divider()
     st.sidebar.caption("Transactions on file: " + str(len(rows)))
 
+    today = str(datetime.date.today())
+    if find_cashup(cashups, today) is None:
+        st.sidebar.caption("Today is still open.")
+    else:
+        st.sidebar.caption("Today has been closed.")
+
     if screen == "Cash Register":
         render_register(config, rows)
+    elif screen == "Daily Cash-Up":
+        render_cashup(config, rows, cashups)
     elif screen == "Daily Report":
         render_day_report(rows)
     else:

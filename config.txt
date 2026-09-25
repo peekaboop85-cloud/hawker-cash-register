@@ -4,3 +4,6 @@
 store_name=Ah Beng Vegetarian Food
 payment_types=Cash,PayNow,PayLah,PayWave
 cash_type=Cash
+
+# Small change put into the drawer before opening
+opening_float=50.00

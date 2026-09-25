@@ -7,8 +7,9 @@ Streamlit application that works like an old-style cash receipting machine.
 | File | Purpose |
 |---|---|
 | `app.py` | The whole application |
-| `config.txt` | Shop name + accepted payment types (start-up file) |
+| `config.txt` | Shop name, payment types, opening float (start-up file) |
 | `sales.txt` | Transaction storage (start-up file, ships with demo data) |
+| `cashup.txt` | One line per day that has been closed (start-up file) |
 | `screenshots/` | Screen dumps for the operational manual |
 | `Part3_Documentation.docx` | AI prompts + code explanation + operational manual |
 
@@ -31,16 +32,28 @@ date,time,receipt_no,sales,rendered,change,payment_type
 Dates are written as `YYYY-MM-DD` on purpose: sorting the text sorts the dates,
 and `date[:7]` gives the month. No date library is needed for the reports.
 
+`cashup.txt` — one line per closed day:
+
+```
+date,time,opening_float,cash_sales,expected,counted,variance
+2026-09-17,20:29:02,50.00,62.50,112.50,111.00,-1.50
+```
+
 `config.txt` — one `setting=value` per line. Adding a new payment type is a text
-edit, not a code change.
+edit, not a code change. `opening_float` is the small change the drawer starts
+the day with.
 
 ## Screens
 
 1. **Cash Register** — key in the amount payable and the cash received, press
    **Total**, and the change plus a receipt are shown.
    Electronic payments auto-fill the received amount and disable the box.
-2. **Daily Report** — every transaction of one day + sales by payment type.
-3. **Monthly Report** — sales summarised by day + sales by payment type.
+2. **Daily Cash-Up** — count the drawer at closing time. Opening float plus cash
+   sales gives what the drawer should hold; the counted amount gives the
+   variance. Electronic payments are listed separately because that money never
+   reaches the drawer. Prints a Z reading, the way an old till did.
+3. **Daily Report** — every transaction of one day + sales by payment type.
+4. **Monthly Report** — sales summarised by day + sales by payment type.
 
 ### Why the amounts sit inside a form
 
